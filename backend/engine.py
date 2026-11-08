@@ -17,6 +17,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import uuid
+import random
+import smtplib
+from email.message import EmailMessage
 
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI()
@@ -1392,22 +1395,53 @@ def Register(request: Request, data: RegisterLogin):
         if existing_user:
             raise HTTPException(status_code=400, detail="User already registered.")
 
+        # Generate a random 6-digit verification code
+        verification_code = "".join([str(random.randint(0, 9)) for _ in range(6)])
+
+        # Send the verification code to the user's email
+        sender_email = "hynn.production@gmail.com"
+        app_password = os.getenv("email_pw")  # Use the App Password from your .env file
+
+        # Construct the email
+        msg = EmailMessage()
+        msg.set_content(
+            f"Your verification code is: {verification_code}. Please use this code to verify your email address. The code will expire in 3 minutes."
+        )
+        msg["Subject"] = "Verification Code From Ledgerly"
+        msg["From"] = sender_email
+        msg["To"] = data.email
+
+        try:
+            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.starttls()  # Upgrade the connection to secure (TLS)
+                server.login(
+                    sender_email, app_password
+                )  # Log in with your App Password
+                server.send_message(msg)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to send verification email: {str(e)}",
+            )
+
+        expiration_time = datetime.now() + timedelta(minutes=3)
+
         hashed_password = hash_password(data.password)
 
         new_user = Users(
             email=data.email,
             password=hashed_password,
             profile_picture="default_pfp.jpg",
+            verifcation_code=verification_code,
+            expiration_time=expiration_time,
         )
 
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
 
-        access_token = create_access_token(data={"id": str(new_user.user_id)})
         return {
-            "access_token": access_token,
-            "token_type": "bearer",  # 👈 Just an informational label for the frontend
+            "message": "User registered successfully. Please check your email for the verification code.",
         }
 
     except HTTPException as he:
@@ -1436,11 +1470,123 @@ def Login(request: Request, data: RegisterLogin):
                 status_code=401, detail="Incorrect password. Please try again."
             )
 
+        if existing_user.verifcation_code and existing_user.expiration_time:
+            raise HTTPException(
+                status_code=403,
+                detail="Please verify your email using the code sent to you.",
+            )
+
         # Create the token payload and generate the token
         access_token = create_access_token(data={"id": str(existing_user.user_id)})
 
         return {"access_token": access_token, "token_type": "bearer"}
 
+    except HTTPException as he:
+        raise he
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        db.close()
+
+
+class VerifyEmail(BaseModel):
+    email: str
+    verification_code: str
+
+
+@app.post("/api/verify-email")
+@limiter.limit("5/minute")
+def verify_email(
+    request: Request, data: VerifyEmail, authorization: str = Header(None)
+):
+    db = SessionLocal()
+    try:
+        user = db.query(Users).filter(Users.email == data.email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        if user.verifcation_code != data.verification_code:
+            raise HTTPException(status_code=400, detail="Invalid verification code.")
+
+        if datetime.now() > user.expiration_time:
+            raise HTTPException(
+                status_code=401, detail="Verification code has expired."
+            )
+
+        # Mark the user as verified
+        user.verifcation_code = None
+        user.expiration_time = None
+        db.commit()
+
+        access_token = create_access_token(data={"id": str(user.user_id)})
+
+        return {"access_token": access_token, "token_type": "bearer"}
+    except HTTPException as he:
+        raise he
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        db.close()
+
+
+class ResendVerificationCode(BaseModel):
+    email: str
+
+
+@limiter.limit("3/minute")
+@app.post("/api/resend-verification-code")
+def resend_verification_code(
+    request: Request, data: ResendVerificationCode, authorization: str = Header(None)
+):
+
+    db = SessionLocal()
+    try:
+        user = db.query(Users).filter(Users.email == data.email).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        # Generate a new verification code
+        new_verification_code = "".join([str(random.randint(0, 9)) for _ in range(6)])
+        # Send the verification code to the user's email
+        sender_email = "hynn.production@gmail.com"
+        app_password = os.getenv("email_pw")
+
+        # Construct the email
+        msg = EmailMessage()
+        msg.set_content(
+            f"Your verification code is: {new_verification_code}. Please use this code to verify your email address. The code will expire in 3 minutes."
+        )
+        msg["Subject"] = "Verification Code From Ledgerly"
+        msg["From"] = sender_email
+        msg["To"] = data.email
+
+        try:
+            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.starttls()  # Upgrade the connection to secure (TLS)
+                server.login(
+                    sender_email, app_password
+                )  # Log in with your App Password
+                server.send_message(msg)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to send verification email: {str(e)}",
+            )
+
+        expiration_time = datetime.now() + timedelta(minutes=3)
+
+        # Update the user's verification code and expiration time
+        user.verifcation_code = new_verification_code
+        user.expiration_time = expiration_time
+        db.commit()
+
+        return {"message": "New verification code sent."}
     except HTTPException as he:
         raise he
 

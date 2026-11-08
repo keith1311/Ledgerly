@@ -2,7 +2,7 @@ let currentIndex;
 let theme = "";
 let token = localStorage.getItem("authToken");
 const apiURL = "https://finance-hub-qakq.onrender.com";
-// const apiURL = "http://127.0.0.1:8000";
+//  const apiURL = "http://127.0.0.1:8000";
 // 1. Get from localStorage and convert to a number
 currentIndex = parseInt(localStorage.getItem("currentIndex"));
 theme = localStorage.getItem("theme");
@@ -1028,7 +1028,11 @@ registerForm.addEventListener("submit", async (event) => {
       rpwWarningText.innerHTML = "";
       remailInput.value = "";
       rpasswordInput.value = "";
-      fetchAndRenderMainPage();
+      document.getElementById("verify-dialog").dataset.email = email; // Pass the email to the verify dialog
+      document.getElementById("verify-dialog").showModal();
+      alert(
+        "Verification code resent successfully! Please check your email. Especially check your spam/junk folder if you don't see it in your inbox.",
+      );
       registerDialog.close();
     }
   } catch (error) {
@@ -1135,6 +1139,16 @@ loginForm.addEventListener("submit", async (event) => {
         lpwWarningText.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${data.detail}`;
         lemailWarningText.innerHTML = "";
         lpasswordInput.value = "";
+        return;
+      }
+      if (statusCode === 403) {
+        lemailWarningText.innerHTML = "";
+        lemailInput.value = "";
+        lpwWarningText.innerHTML = "";
+        lpasswordInput.value = "";
+        document.getElementById("verify-dialog").dataset.email = email; // Pass the email to the verify dialog
+        document.getElementById("verify-dialog").showModal();
+        loginDialog.close();
         return;
       }
     }
@@ -1653,4 +1667,94 @@ document.getElementById("report-btn").addEventListener("click", function () {
   };
 
   html2pdf().from(element).set(options).save();
+});
+
+// ===================== Verify Email Function ====================== //
+const verifyForm = document.getElementById("verify-form");
+
+verifyForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const email = document.getElementById("verify-dialog").dataset.email; // Get the email from the dataset
+  const code = document.getElementById("verify-code").value.trim();
+
+  if (code.length === 0) {
+    document.getElementById("verify-warning-text").innerHTML =
+      '<i class="fa-solid fa-triangle-exclamation"></i> This field is required.';
+    return;
+  }
+
+  if (code.length !== 6) {
+    document.getElementById("verify-warning-text").innerHTML =
+      '<i class="fa-solid fa-triangle-exclamation"></i> Code must be 6 digits.';
+    return;
+  }
+
+  try {
+    const response = await fetch(`${apiURL}/api/verify-email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+      },
+      body: JSON.stringify({
+        email: email,
+        verification_code: code,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      document.getElementById("verify-warning-text").innerHTML =
+        `<i class="fa-solid fa-triangle-exclamation"></i> ${errorData.detail}`;
+      document.getElementById("verify-code").value = "";
+      return;
+    }
+    const data = await response.json();
+    // If successful, clear the form and close the dialog
+    document.getElementById("verify-warning-text").innerHTML = "";
+    document.getElementById("verify-code").value = "";
+    document.getElementById("verify-dialog").close();
+    localStorage.setItem("authToken", data.access_token);
+    token = data.access_token;
+    fetchAndRenderMainPage(); // Refresh the main page to reflect the verified status
+  } catch (error) {
+    console.error("Error during email verification:", error);
+    document.getElementById("verify-warning-text").innerHTML =
+      '<i class="fa-solid fa-triangle-exclamation"></i> An error occurred. Please try again.';
+  }
+});
+
+// ===================== Resend Verification Code Function ====================== //
+document.getElementById("send-again").addEventListener("click", async () => {
+  const email = document.getElementById("verify-dialog").dataset.email; // Get the email from the dataset
+  try {
+    const response = await fetch(`${apiURL}/api/resend-verification-code`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+      },
+      body: JSON.stringify({
+        email: email,
+      }),
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      document.getElementById("verify-warning-text").innerHTML =
+        `<i class="fa-solid fa-triangle-exclamation"></i> ${errorData.detail}`;
+      return;
+    }
+
+    // If successful, show a success message
+    if (response.ok) {
+      alert(
+        "Verification code resent successfully! Please check your email. Especially check your spam/junk folder if you don't see it in your inbox.",
+      );
+    }
+  } catch (error) {
+    console.error("Error during resend verification code:", error);
+    document.getElementById("verify-warning-text").innerHTML =
+      '<i class="fa-solid fa-triangle-exclamation"></i> An error occurred. Please try again.';
+  }
 });

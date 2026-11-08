@@ -669,6 +669,10 @@ dialog.dialog-box h3 {
   background: rgba(0, 0, 0, 0.95); /* Extremely dark overlay */
 }
 
+#verify-dialog[open]::backdrop {
+  background: rgba(0, 0, 0, 0.95); /* Extremely dark overlay */
+}
+
 .pfp {
   width: 25%;
   height: 20%;

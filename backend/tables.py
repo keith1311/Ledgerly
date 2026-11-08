@@ -24,6 +24,8 @@ class Users(Base):
     )
     password = Column(String)
     profile_picture = Column(String)
+    verifcation_code = Column(String, nullable=True)
+    expiration_time = Column(DateTime, nullable=True)
 
     # Fixed: Match relationship target name and back_populates string
     wallets = relationship(
